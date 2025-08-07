@@ -1,6 +1,7 @@
 import csv
+from typing import List, Tuple
 
-def parse_erg(file_path: str) -> list[tuple[int, int]]:
+def parse_erg(file_path: str) -> List[Tuple[int, int]]:
     """
     Parses an ERG file and returns a list of (time, power) tuples.
 
