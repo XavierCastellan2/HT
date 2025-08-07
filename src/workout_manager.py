@@ -1,20 +1,20 @@
 import asyncio
 import queue
 from typing import List, Tuple, Optional
-from src.trainer import Trainer
+from src.cycling_manager import CyclingManager
 
 class WorkoutManager:
     """Manages the execution of a workout session."""
 
-    def __init__(self, trainer: Optional[Trainer], ui_queue: queue.Queue):
+    def __init__(self, cycling_manager: CyclingManager, ui_queue: queue.Queue):
         """
         Initializes the WorkoutManager.
 
         Args:
-            trainer: An instance of the Trainer class to control the fitness machine.
+            cycling_manager: An instance of the CyclingManager.
             ui_queue: A queue to send updates to the UI thread.
         """
-        self.trainer = trainer
+        self.cycling_manager = cycling_manager
         self.ui_queue = ui_queue
         self.workout: List[Tuple[int, int]] = []
         self._is_running = False
@@ -51,20 +51,15 @@ class WorkoutManager:
                 print("Workout loop cancelled.")
                 break
 
-            # Wait until it's time for the next step
             current_time = asyncio.get_event_loop().time()
             time_to_wait = (start_time + time_offset) - current_time
             if time_to_wait > 0:
                 await asyncio.sleep(time_to_wait)
 
-            # Update UI and trainer
             progress = (time_offset / total_duration) * 100
             self.ui_queue.put({"type": "workout_update", "target_power": power, "progress": progress})
 
-            if self.trainer:
-                await self.trainer.set_target_power(power)
-            else:
-                print(f"Target Power: {power}W (Trainer not connected)")
+            await self.cycling_manager.set_target_power(power)
 
         self._is_running = False
         self.ui_queue.put({"type": "workout_finished", "message": "Workout finished!"})

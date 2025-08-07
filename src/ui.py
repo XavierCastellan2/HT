@@ -3,9 +3,8 @@ from tkinter import ttk, filedialog
 import asyncio
 import threading
 import queue
-from src.ble_manager import DeviceManager
+from src.cycling_manager import CyclingManager
 from src.erg_parser import parse_erg
-from src.trainer import Trainer
 from src.workout_manager import WorkoutManager
 
 class App(tk.Tk):
@@ -22,8 +21,8 @@ class App(tk.Tk):
         self.asyncio_thread.start()
 
         # --- Business Logic ---
-        self.device_manager = DeviceManager(self.queue)
-        self.workout_manager = WorkoutManager(None, self.queue) # Trainer will be set later
+        self.cycling_manager = CyclingManager(self.queue)
+        self.workout_manager = WorkoutManager(self.cycling_manager, self.queue)
         self.device_lists = {}
 
         # --- UI Initialization ---
@@ -52,12 +51,13 @@ class App(tk.Tk):
         devices_frame = ttk.LabelFrame(main_frame, text="Devices")
         devices_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
 
-        for i, role in enumerate(["hrm", "csc", "power", "ftms"]):
+        roles = ["hrm", "csc", "power", "ftms", "tacx"]
+        for i, role in enumerate(roles):
             ttk.Label(devices_frame, text=f"{role.upper()}:").grid(row=0, column=i, padx=10, pady=2, sticky=tk.W)
             listbox = tk.Listbox(devices_frame, exportselection=False, height=5)
             listbox.grid(row=1, column=i, padx=10, pady=5, sticky=tk.EW)
             self.device_lists[role] = listbox
-        devices_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        devices_frame.grid_columnconfigure(list(range(len(roles))), weight=1)
 
         # Data Frame
         data_frame = ttk.LabelFrame(main_frame, text="Live Data")
@@ -99,35 +99,23 @@ class App(tk.Tk):
         self.lbl_status.config(text="Status: Scanning...")
         for listbox in self.device_lists.values():
             listbox.delete(0, tk.END)
-        asyncio.run_coroutine_threadsafe(self.device_manager.scan(), self.loop)
+        asyncio.run_coroutine_threadsafe(self.cycling_manager.scan(), self.loop)
 
     def start_connect(self):
         self.lbl_status.config(text="Status: Connecting...")
         for role, listbox in self.device_lists.items():
             selection_indices = listbox.curselection()
             if selection_indices:
-                selection_index = selection_indices[0]
+                selection_index = listbox.curselection()[0]
                 device_address = listbox.get(selection_index).split('(')[-1].strip(')')
                 asyncio.run_coroutine_threadsafe(
-                    self.device_manager.connect_to_device(role, device_address),
+                    self.cycling_manager.connect_to_device(role, device_address),
                     self.loop
                 )
 
     def start_workout(self):
-        ftms_client = self.device_manager.get_client("ftms")
-        if ftms_client:
-            trainer = Trainer(ftms_client)
-            self.workout_manager.trainer = trainer
-
-            # Start notifications for all connected devices
-            for role in ["hrm", "csc", "power"]:
-                if self.device_manager.get_client(role):
-                     asyncio.run_coroutine_threadsafe(self.device_manager.start_notifications(role), self.loop)
-
-            # Start the workout
-            self.workout_manager.start_workout()
-        else:
-            self.lbl_status.config(text="Status: Cannot start workout. FTMS trainer not connected.")
+        self.lbl_status.config(text="Status: Starting workout...")
+        self.workout_manager.start_workout()
 
     def check_queue(self):
         while not self.queue.empty():
@@ -174,7 +162,7 @@ class App(tk.Tk):
         print("Closing application...")
         if self.loop.is_running():
             self.workout_manager.stop_workout()
-            asyncio.run_coroutine_threadsafe(self.device_manager.disconnect(), self.loop)
+            asyncio.run_coroutine_threadsafe(self.cycling_manager.disconnect(), self.loop)
             self.loop.call_soon_threadsafe(self.loop.stop)
         self.destroy()
 
