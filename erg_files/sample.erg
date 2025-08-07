@@ -1,0 +1,7 @@
+# Simple ERG file format: time_in_seconds,power_in_watts
+0,100
+60,100
+60,150
+120,150
+120,100
+180,100
