@@ -18,15 +18,14 @@ class WorkoutManager:
         self.ui_queue = ui_queue
         self.workout: List[Tuple[int, int]] = []
         self._is_running = False
-        self._workout_task: Optional[asyncio.Task] = None
 
     def load_workout(self, workout_data: List[Tuple[int, int]]):
         """Loads workout data into the manager."""
         self.workout = workout_data
         print(f"Workout loaded with {len(self.workout)} steps.")
 
-    def start_workout(self):
-        """Starts the workout execution in a new asyncio task."""
+    async def run_workout(self):
+        """The main async coroutine for the workout session."""
         if not self.workout:
             print("Cannot start: No workout loaded.")
             self.ui_queue.put({"type": "status_update", "message": "Error: No workout loaded."})
@@ -37,38 +36,37 @@ class WorkoutManager:
             return
 
         self._is_running = True
-        self._workout_task = asyncio.create_task(self._run_workout_loop())
         self.ui_queue.put({"type": "status_update", "message": "Workout started."})
-
-    async def _run_workout_loop(self):
-        """The main async loop for the workout session."""
         print("Starting workout loop...")
         start_time = asyncio.get_event_loop().time()
         total_duration = self.workout[-1][0] if self.workout else 1
 
-        for i, (time_offset, power) in enumerate(self.workout):
-            if not self._is_running:
-                print("Workout loop cancelled.")
-                break
+        try:
+            for i, (time_offset, power) in enumerate(self.workout):
+                if not self._is_running:
+                    print("Workout loop cancelled.")
+                    break
 
-            current_time = asyncio.get_event_loop().time()
-            time_to_wait = (start_time + time_offset) - current_time
-            if time_to_wait > 0:
-                await asyncio.sleep(time_to_wait)
+                current_time = asyncio.get_event_loop().time()
+                time_to_wait = (start_time + time_offset) - current_time
+                if time_to_wait > 0:
+                    await asyncio.sleep(time_to_wait)
 
-            progress = (time_offset / total_duration) * 100
-            self.ui_queue.put({"type": "workout_update", "target_power": power, "progress": progress})
+                progress = (time_offset / total_duration) * 100
+                self.ui_queue.put({"type": "workout_update", "target_power": power, "progress": progress})
 
-            await self.cycling_manager.set_target_power(power)
-
-        self._is_running = False
-        self.ui_queue.put({"type": "workout_finished", "message": "Workout finished!"})
-        print("Workout loop finished.")
+                await self.cycling_manager.set_target_power(power)
+        except asyncio.CancelledError:
+            print("Workout run cancelled.")
+        finally:
+            self._is_running = False
+            if asyncio.current_task() and not asyncio.current_task().cancelled():
+                 self.ui_queue.put({"type": "workout_finished", "message": "Workout finished!"})
+            print("Workout loop finished.")
 
     def stop_workout(self):
-        """Stops the currently running workout."""
-        if self._is_running and self._workout_task:
+        """Requests the currently running workout to stop."""
+        if self._is_running:
             self._is_running = False
-            self._workout_task.cancel()
             print("Workout stop requested.")
             self.ui_queue.put({"type": "status_update", "message": "Workout stopped."})

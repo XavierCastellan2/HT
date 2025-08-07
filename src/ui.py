@@ -19,6 +19,7 @@ class App(tk.Tk):
         self.loop = asyncio.new_event_loop()
         self.asyncio_thread = threading.Thread(target=self.start_asyncio_loop, daemon=True)
         self.asyncio_thread.start()
+        self.workout_task = None
 
         # --- Business Logic ---
         self.cycling_manager = CyclingManager(self.queue)
@@ -115,7 +116,7 @@ class App(tk.Tk):
 
     def start_workout(self):
         self.lbl_status.config(text="Status: Starting workout...")
-        self.workout_manager.start_workout()
+        self.workout_task = asyncio.run_coroutine_threadsafe(self.workout_manager.run_workout(), self.loop)
 
     def check_queue(self):
         while not self.queue.empty():
@@ -162,6 +163,8 @@ class App(tk.Tk):
         print("Closing application...")
         if self.loop.is_running():
             self.workout_manager.stop_workout()
+            if self.workout_task:
+                self.workout_task.cancel()
             asyncio.run_coroutine_threadsafe(self.cycling_manager.disconnect(), self.loop)
             self.loop.call_soon_threadsafe(self.loop.stop)
         self.destroy()
