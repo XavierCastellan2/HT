@@ -36,15 +36,15 @@ class CyclingManager:
             service = self._initialize_service(device_type, client)
             if service:
                 self.services[device_type] = service
-                # For Tacx, the handler is set before enabling notifications
-                if device_type == "tacx":
-                     service.set_specific_trainer_data_page_handler(self._handle_tacx_update)
-                await service.enable_notifications()
+                await self._enable_service_notifications(device_type, service)
 
             status = "Connected"
             print(f"Successfully connected to {address} as {device_type}.")
         except Exception as e:
             print(f"Failed to connect to {address}: {e}")
+            # Ensure failed client is removed
+            if device_type in self.clients:
+                del self.clients[device_type]
 
         self.ui_queue.put({"type": "connection_status", "device_type": device_type, "status": status, "address": address})
 
@@ -63,10 +63,28 @@ class CyclingManager:
             service.set_cycling_power_measurement_handler(self._handle_power_update)
             return service
         elif device_type == "ftms":
-            return FitnessMachineService(client)
-        elif device_type == "tacx": # For ANT+ FE-C over BLE
-            return TacxTrainerControl(client)
+            service = FitnessMachineService(client)
+            service.set_indoor_bike_data_handler(self._handle_ftms_update)
+            return service
+        elif device_type == "tacx":
+            service = TacxTrainerControl(client)
+            service.set_specific_trainer_data_page_handler(self._handle_tacx_update)
+            return service
         return None
+
+    async def _enable_service_notifications(self, device_type, service):
+        """Enables notifications for the given service."""
+        print(f"Enabling notifications for {device_type}...")
+        if device_type == "hrm":
+            await service.enable_hr_measurement_notifications()
+        elif device_type == "csc":
+            await service.enable_csc_measurement_notifications()
+        elif device_type == "power":
+            await service.enable_cycling_power_measurement_notifications()
+        elif device_type == "ftms":
+            await service.enable_indoor_bike_data_notify()
+        elif device_type == "tacx":
+            await service.enable_fec_notifications()
 
     async def disconnect(self):
         """Disconnects all connected clients."""
@@ -82,6 +100,9 @@ class CyclingManager:
         trainer_service = self.services.get("ftms") or self.services.get("tacx")
         if trainer_service:
             try:
+                # For FTMS, we should request control first
+                if isinstance(trainer_service, FitnessMachineService):
+                    await trainer_service.request_control()
                 await trainer_service.set_target_power(power)
                 print(f"Set target power to {power}W")
             except Exception as e:
@@ -98,6 +119,10 @@ class CyclingManager:
 
     def _handle_power_update(self, measurement):
         self.ui_queue.put({"type": "power_update", "value": measurement.instantaneous_power})
+
+    def _handle_ftms_update(self, data):
+        self.ui_queue.put({"type": "power_update", "value": data.instantaneous_power})
+        self.ui_queue.put({"type": "csc_update", "crank_rev": data.instantaneous_cadence})
 
     def _handle_tacx_update(self, data):
         """Handles the combined data page from a Tacx trainer."""
