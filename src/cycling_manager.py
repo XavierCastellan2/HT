@@ -24,6 +24,13 @@ class CyclingManager:
         self.discovered_devices = await BleakScanner.discover(timeout=timeout)
         self.ui_queue.put({"type": "scan_complete", "devices": self.discovered_devices})
 
+    async def connect_all_devices(self, devices_to_connect: List[tuple]):
+        """Connects to a list of devices sequentially."""
+        self.ui_queue.put({"type": "status_update", "message": "Connecting to devices..."})
+        for device_type, address in devices_to_connect:
+            await self.connect_to_device(device_type, address)
+        self.ui_queue.put({"type": "status_update", "message": "Device connection process complete."})
+
     async def connect_to_device(self, device_type: str, address: str):
         """Connects to a device, initializes the pycycling service, and enables notifications."""
         print(f"Attempting to connect to {address} as {device_type}...")

@@ -103,16 +103,22 @@ class App(tk.Tk):
         asyncio.run_coroutine_threadsafe(self.cycling_manager.scan(), self.loop)
 
     def start_connect(self):
-        self.lbl_status.config(text="Status: Connecting...")
+        devices_to_connect = []
         for role, listbox in self.device_lists.items():
             selection_indices = listbox.curselection()
             if selection_indices:
                 selection_index = listbox.curselection()[0]
                 device_address = listbox.get(selection_index).split('(')[-1].strip(')')
-                asyncio.run_coroutine_threadsafe(
-                    self.cycling_manager.connect_to_device(role, device_address),
-                    self.loop
-                )
+                devices_to_connect.append((role, device_address))
+
+        if devices_to_connect:
+            asyncio.run_coroutine_threadsafe(
+                self.cycling_manager.connect_all_devices(devices_to_connect),
+                self.loop
+            )
+        else:
+            self.lbl_status.config(text="Status: No devices selected to connect.")
+
 
     def start_workout(self):
         self.lbl_status.config(text="Status: Starting workout...")
