@@ -1,6 +1,7 @@
 import sys
 import time
 import queue
+import qasync
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QGroupBox, QLabel, QListWidget, QProgressBar, QFileDialog
@@ -44,7 +45,6 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout()
         main_widget.setLayout(main_layout)
 
-        # --- Controls ---
         controls_group = QGroupBox("Controls")
         controls_layout = QHBoxLayout()
         controls_group.setLayout(controls_layout)
@@ -53,19 +53,21 @@ class MainWindow(QMainWindow):
         self.btn_scan = QPushButton("Scan")
         self.btn_connect = QPushButton("Connect")
         self.btn_start = QPushButton("Start Workout")
+        self.btn_disconnect = QPushButton("Disconnect")
 
         self.btn_load_erg.clicked.connect(self.load_erg_file)
         self.btn_scan.clicked.connect(self.start_scan)
         self.btn_connect.clicked.connect(self.start_connect)
         self.btn_start.clicked.connect(self.start_workout)
+        self.btn_disconnect.clicked.connect(self.disconnect_devices)
 
         controls_layout.addWidget(self.btn_load_erg)
         controls_layout.addWidget(self.btn_scan)
         controls_layout.addWidget(self.btn_connect)
         controls_layout.addWidget(self.btn_start)
+        controls_layout.addWidget(self.btn_disconnect)
         controls_layout.addStretch()
 
-        # --- Devices ---
         devices_group = QGroupBox("Devices")
         devices_layout = QGridLayout()
         devices_group.setLayout(devices_layout)
@@ -77,7 +79,6 @@ class MainWindow(QMainWindow):
             self.device_lists[role] = list_widget
             devices_layout.addWidget(list_widget, 1, i)
 
-        # --- Info & Status ---
         info_group = QGroupBox("Info")
         info_layout = QHBoxLayout()
         info_group.setLayout(info_layout)
@@ -101,10 +102,8 @@ class MainWindow(QMainWindow):
         info_layout.addLayout(data_layout)
         info_layout.addLayout(status_layout)
 
-        # --- Graph ---
         self.graph = TrainingGraph()
 
-        # --- Main Layout ---
         main_layout.addWidget(controls_group)
         main_layout.addWidget(devices_group)
         main_layout.addWidget(info_group)
@@ -128,6 +127,11 @@ class MainWindow(QMainWindow):
             self.loop.create_task(self.cycling_manager.connect_all_devices(devices_to_connect))
         else:
             self.lbl_status.setText("Status: No devices selected.")
+
+    def disconnect_devices(self):
+        self.lbl_status.setText("Status: Disconnecting all devices...")
+        self.workout_manager.stop_workout()
+        self.loop.create_task(self.cycling_manager.disconnect())
 
     def load_erg_file(self):
         filepath, _ = QFileDialog.getOpenFileName(self, "Open ERG File", "", "ERG Files (*.erg);;All Files (*)")
@@ -156,24 +160,37 @@ class MainWindow(QMainWindow):
             msg_type = message.get("type")
             if msg_type == "scan_complete":
                 self.handle_scan_complete(message.get("devices_by_role", {}))
-            elif msg_type == "hr_update":
-                self.lbl_hr.setText(f"HR: {message.get('value')} BPM")
-                self.graph.add_data_point("hr", time.time() - self.start_time, message.get('value'))
-            elif msg_type == "power_update":
-                self.lbl_power.setText(f"Power: {message.get('value')} W")
-                self.graph.add_data_point("power", time.time() - self.start_time, message.get('value'))
-            elif msg_type == "csc_update":
-                self.lbl_cadence.setText(f"Cadence: {message.get('crank_rev', 0)} RPM")
-                self.graph.add_data_point("cadence", time.time() - self.start_time, message.get('crank_rev', 0))
-            elif msg_type == "workout_update":
-                self.lbl_target_power.setText(f"Target Power: {message.get('target_power')} W")
-                self.progress.setValue(int(message.get('progress', 0)))
-                self.graph.add_data_point("target_power", time.time() - self.start_time, message.get('target_power'))
-            elif msg_type == "connection_status":
-                self.lbl_status.setText(f"Status: {message.get('device_type').upper()} {message.get('status')}")
-            elif msg_type == "status_update" or msg_type == "workout_finished":
-                self.lbl_status.setText(f"Status: {message.get('message')}")
-                if msg_type == "workout_finished": self.progress.setValue(100)
+            elif msg_type in ["hr_update", "power_update", "csc_update", "workout_update"]:
+                self.handle_data_update(message)
+            elif msg_type in ["connection_status", "status_update", "workout_finished"]:
+                self.handle_status_update(message)
+
+    def handle_data_update(self, message):
+        msg_type = message.get("type")
+        elapsed_time = time.time() - self.start_time if self.start_time else 0
+        if msg_type == "hr_update":
+            self.lbl_hr.setText(f"HR: {message.get('value')} BPM")
+            self.graph.add_data_point("hr", elapsed_time, message.get('value'))
+        elif msg_type == "power_update":
+            self.lbl_power.setText(f"Power: {message.get('value')} W")
+            self.graph.add_data_point("power", elapsed_time, message.get('value'))
+        elif msg_type == "csc_update":
+            self.lbl_cadence.setText(f"Cadence: {message.get('crank_rev', 0)} RPM")
+            self.graph.add_data_point("cadence", elapsed_time, message.get('crank_rev', 0))
+        elif msg_type == "workout_update":
+            self.lbl_target_power.setText(f"Target Power: {message.get('target_power')} W")
+            self.progress.setValue(int(message.get('progress', 0)))
+            self.graph.add_data_point("target_power", elapsed_time, message.get('target_power'))
+
+    def handle_status_update(self, message):
+        msg_type = message.get("type")
+        if msg_type == "connection_status":
+            self.lbl_status.setText(f"Status: {message.get('device_type').upper()} {message.get('status')}")
+        elif msg_type == "workout_finished":
+            self.lbl_status.setText(f"Status: {message.get('message')}")
+            self.progress.setValue(100)
+        else:
+            self.lbl_status.setText(f"Status: {message.get('message')}")
 
     def handle_scan_complete(self, devices_by_role):
         self.devices_by_role = devices_by_role
@@ -187,8 +204,9 @@ class MainWindow(QMainWindow):
         if self.workout_manager._is_running:
             self.graph.draw_plot()
 
-    def closeEvent(self, event):
+    @qasync.asyncClose
+    async def closeEvent(self, event):
         print("Closing application...")
         self.workout_manager.stop_workout()
-        self.loop.create_task(self.cycling_manager.disconnect())
+        await self.cycling_manager.disconnect()
         super().closeEvent(event)
