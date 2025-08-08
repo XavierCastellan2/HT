@@ -1,16 +1,18 @@
-import tkinter as tk
-from tkinter import ttk
+import sys
+from PySide6.QtWidgets import QWidget, QVBoxLayout
 from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 import numpy as np
 
-class TrainingGraph(ttk.Frame):
-    """A Tkinter widget that displays a real-time matplotlib graph."""
+class TrainingGraph(QWidget):
+    """A Qt widget that displays a real-time matplotlib graph."""
 
-    def __init__(self, parent, *args, **kwargs):
-        super().__init__(parent, *args, **kwargs)
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
         self.figure = Figure(figsize=(5, 4), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+
         self.ax1 = self.figure.add_subplot(211)
         self.ax2 = self.figure.add_subplot(212, sharex=self.ax1)
 
@@ -19,8 +21,6 @@ class TrainingGraph(ttk.Frame):
         self.ax2.set_title("Heart Rate & Cadence")
         self.ax2.set_ylabel("BPM / RPM")
         self.ax2.set_xlabel("Time (s)")
-
-        # Hide x-axis labels on the top plot
         self.ax1.tick_params(axis='x', labelbottom=False)
 
         self.series = {
@@ -36,9 +36,9 @@ class TrainingGraph(ttk.Frame):
         self.ax2.grid(True)
         self.figure.tight_layout()
 
-        self.canvas = FigureCanvasTkAgg(self.figure, self)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        layout = QVBoxLayout()
+        layout.addWidget(self.canvas)
+        self.setLayout(layout)
 
     def add_data_point(self, series_name, x, y):
         """Adds a new data point to a named series."""

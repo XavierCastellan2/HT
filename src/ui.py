@@ -1,98 +1,154 @@
-import tkinter as tk
-from tkinter import ttk, filedialog
-import asyncio
-import threading
-import queue
+import sys
 import time
+import queue
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QPushButton, QGroupBox, QLabel, QListWidget, QProgressBar, QFileDialog
+)
+from PySide6.QtCore import QTimer
+
 from src.cycling_manager import CyclingManager
 from src.erg_parser import parse_erg
 from src.workout_manager import WorkoutManager
 from src.graph_widget import TrainingGraph
 
-class App(tk.Tk):
-    def __init__(self):
+class MainWindow(QMainWindow):
+    def __init__(self, loop):
         super().__init__()
+        self.loop = loop
 
-        self.title("BLE Training App")
-        self.geometry("800x700")
+        self.setWindowTitle("Qt BLE Training App")
+        self.setGeometry(100, 100, 800, 700)
 
         self.start_time = 0
         self.queue = queue.Queue()
-        self.loop = asyncio.new_event_loop()
-        self.asyncio_thread = threading.Thread(target=self.start_asyncio_loop, daemon=True)
-        self.asyncio_thread.start()
-        self.workout_task = None
 
         self.cycling_manager = CyclingManager(self.queue)
         self.workout_manager = WorkoutManager(self.cycling_manager, self.queue)
         self.device_lists = {}
-        self.devices_by_role = {} # To store filtered device objects
+        self.devices_by_role = {}
 
-        self.create_ui()
-        self.after(100, self.check_queue)
-        self.after(1000, self.update_graph)
-        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self._create_ui()
 
-    def create_ui(self):
-        main_frame = ttk.Frame(self, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        self.queue_timer = QTimer()
+        self.queue_timer.timeout.connect(self.check_queue)
+        self.queue_timer.start(100)
 
-        controls_frame = ttk.LabelFrame(main_frame, text="Controls")
-        controls_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        self.btn_load_erg = ttk.Button(controls_frame, text="Load ERG File", command=self.load_erg_file)
-        self.btn_load_erg.pack(side=tk.LEFT, padx=5, pady=5)
-        self.btn_scan = ttk.Button(controls_frame, text="Scan for Devices", command=self.start_scan)
-        self.btn_scan.pack(side=tk.LEFT, padx=5, pady=5)
-        self.btn_connect = ttk.Button(controls_frame, text="Connect", command=self.start_connect)
-        self.btn_connect.pack(side=tk.LEFT, padx=5, pady=5)
-        self.btn_start = ttk.Button(controls_frame, text="Start Workout", command=self.start_workout)
-        self.btn_start.pack(side=tk.LEFT, padx=5, pady=5)
+        self.graph_timer = QTimer()
+        self.graph_timer.timeout.connect(self.update_graph)
+        self.graph_timer.start(1000)
 
-        devices_frame = ttk.LabelFrame(main_frame, text="Devices")
-        devices_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+    def _create_ui(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QVBoxLayout()
+        main_widget.setLayout(main_layout)
+
+        # --- Controls ---
+        controls_group = QGroupBox("Controls")
+        controls_layout = QHBoxLayout()
+        controls_group.setLayout(controls_layout)
+
+        self.btn_load_erg = QPushButton("Load ERG")
+        self.btn_scan = QPushButton("Scan")
+        self.btn_connect = QPushButton("Connect")
+        self.btn_start = QPushButton("Start Workout")
+
+        self.btn_load_erg.clicked.connect(self.load_erg_file)
+        self.btn_scan.clicked.connect(self.start_scan)
+        self.btn_connect.clicked.connect(self.start_connect)
+        self.btn_start.clicked.connect(self.start_workout)
+
+        controls_layout.addWidget(self.btn_load_erg)
+        controls_layout.addWidget(self.btn_scan)
+        controls_layout.addWidget(self.btn_connect)
+        controls_layout.addWidget(self.btn_start)
+        controls_layout.addStretch()
+
+        # --- Devices ---
+        devices_group = QGroupBox("Devices")
+        devices_layout = QGridLayout()
+        devices_group.setLayout(devices_layout)
+
         roles = ["hrm", "csc", "power", "ftms", "tacx"]
         for i, role in enumerate(roles):
-            ttk.Label(devices_frame, text=f"{role.upper()}:").grid(row=0, column=i, padx=10, pady=2, sticky=tk.W)
-            listbox = tk.Listbox(devices_frame, exportselection=False, height=5)
-            listbox.grid(row=1, column=i, padx=10, pady=5, sticky=tk.EW)
-            self.device_lists[role] = listbox
-        devices_frame.grid_columnconfigure(list(range(len(roles))), weight=1)
+            devices_layout.addWidget(QLabel(f"{role.upper()}:"), 0, i)
+            list_widget = QListWidget()
+            self.device_lists[role] = list_widget
+            devices_layout.addWidget(list_widget, 1, i)
 
-        info_frame = ttk.LabelFrame(main_frame, text="Info")
-        info_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        data_frame = ttk.LabelFrame(info_frame, text="Live Data")
-        data_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
-        self.lbl_hr = ttk.Label(data_frame, text="HR: -- BPM", font=("Helvetica", 12))
-        self.lbl_hr.pack(anchor=tk.W, padx=10, pady=2)
-        self.lbl_cadence = ttk.Label(data_frame, text="Cadence: -- RPM", font=("Helvetica", 12))
-        self.lbl_cadence.pack(anchor=tk.W, padx=10, pady=2)
-        self.lbl_power = ttk.Label(data_frame, text="Power: -- W", font=("Helvetica", 12))
-        self.lbl_power.pack(anchor=tk.W, padx=10, pady=2)
-        self.lbl_target_power = ttk.Label(data_frame, text="Target Power: -- W", font=("Helvetica", 12, "bold"))
-        self.lbl_target_power.pack(anchor=tk.W, padx=10, pady=2)
+        # --- Info & Status ---
+        info_group = QGroupBox("Info")
+        info_layout = QHBoxLayout()
+        info_group.setLayout(info_layout)
 
-        status_frame = ttk.LabelFrame(info_frame, text="Status")
-        status_frame.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=5, pady=5)
-        self.lbl_status = ttk.Label(status_frame, text="Status: Idle", font=("Helvetica", 10))
-        self.lbl_status.pack(anchor=tk.W, padx=10, pady=5)
-        self.progress = ttk.Progressbar(status_frame, orient=tk.HORIZONTAL, length=100, mode='determinate')
-        self.progress.pack(fill=tk.X, expand=True, padx=10, pady=5)
+        data_layout = QVBoxLayout()
+        self.lbl_hr = QLabel("HR: -- BPM")
+        self.lbl_cadence = QLabel("Cadence: -- RPM")
+        self.lbl_power = QLabel("Power: -- W")
+        self.lbl_target_power = QLabel("Target Power: -- W")
+        data_layout.addWidget(self.lbl_hr)
+        data_layout.addWidget(self.lbl_cadence)
+        data_layout.addWidget(self.lbl_power)
+        data_layout.addWidget(self.lbl_target_power)
 
-        graph_frame = ttk.LabelFrame(main_frame, text="Training Graph")
-        graph_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.graph = TrainingGraph(graph_frame)
-        self.graph.pack(fill=tk.BOTH, expand=True)
+        status_layout = QVBoxLayout()
+        self.lbl_status = QLabel("Status: Idle")
+        self.progress = QProgressBar()
+        status_layout.addWidget(self.lbl_status)
+        status_layout.addWidget(self.progress)
+
+        info_layout.addLayout(data_layout)
+        info_layout.addLayout(status_layout)
+
+        # --- Graph ---
+        self.graph = TrainingGraph()
+
+        # --- Main Layout ---
+        main_layout.addWidget(controls_group)
+        main_layout.addWidget(devices_group)
+        main_layout.addWidget(info_group)
+        main_layout.addWidget(self.graph, stretch=1)
+
+    def start_scan(self):
+        self.lbl_status.setText("Status: Scanning...")
+        for listbox in self.device_lists.values():
+            listbox.clear()
+        self.loop.create_task(self.cycling_manager.scan())
+
+    def start_connect(self):
+        devices_to_connect = []
+        for role, listbox in self.device_lists.items():
+            selected_items = listbox.selectedItems()
+            if selected_items:
+                device_text = selected_items[0].text()
+                device_address = device_text.split('(')[-1].strip(')')
+                devices_to_connect.append((role, device_address))
+        if devices_to_connect:
+            self.loop.create_task(self.cycling_manager.connect_all_devices(devices_to_connect))
+        else:
+            self.lbl_status.setText("Status: No devices selected.")
+
+    def load_erg_file(self):
+        filepath, _ = QFileDialog.getOpenFileName(self, "Open ERG File", "", "ERG Files (*.erg);;All Files (*)")
+        if not filepath: return
+        workout_data = parse_erg(filepath)
+        if workout_data:
+            self.workout_manager.load_workout(workout_data)
+            self.lbl_status.setText(f"Status: Loaded {filepath}")
+        else:
+            self.lbl_status.setText(f"Status: Failed to load {filepath}")
 
     def start_workout(self):
         if not self.workout_manager.workout:
-            self.lbl_status.config(text="Status: Please load an ERG file first.")
+            self.lbl_status.setText("Status: Please load an ERG file first.")
             return
         self.start_time = time.time()
         self.graph.clear_plot()
         total_duration = self.workout_manager.workout[-1][0]
         self.graph.set_time_axis_range(total_duration)
-        self.lbl_status.config(text="Status: Starting workout...")
-        self.workout_task = asyncio.run_coroutine_threadsafe(self.workout_manager.run_workout(), self.loop)
+        self.lbl_status.setText("Status: Starting workout...")
+        self.loop.create_task(self.workout_manager.run_workout())
 
     def check_queue(self):
         while not self.queue.empty():
@@ -100,94 +156,39 @@ class App(tk.Tk):
             msg_type = message.get("type")
             if msg_type == "scan_complete":
                 self.handle_scan_complete(message.get("devices_by_role", {}))
-            elif msg_type in ["hr_update", "power_update", "csc_update", "workout_update"]:
-                self.handle_data_update(message)
-            elif msg_type in ["connection_status", "status_update", "workout_finished"]:
-                self.handle_status_update(message)
-        self.after(100, self.check_queue)
+            elif msg_type == "hr_update":
+                self.lbl_hr.setText(f"HR: {message.get('value')} BPM")
+                self.graph.add_data_point("hr", time.time() - self.start_time, message.get('value'))
+            elif msg_type == "power_update":
+                self.lbl_power.setText(f"Power: {message.get('value')} W")
+                self.graph.add_data_point("power", time.time() - self.start_time, message.get('value'))
+            elif msg_type == "csc_update":
+                self.lbl_cadence.setText(f"Cadence: {message.get('crank_rev', 0)} RPM")
+                self.graph.add_data_point("cadence", time.time() - self.start_time, message.get('crank_rev', 0))
+            elif msg_type == "workout_update":
+                self.lbl_target_power.setText(f"Target Power: {message.get('target_power')} W")
+                self.progress.setValue(int(message.get('progress', 0)))
+                self.graph.add_data_point("target_power", time.time() - self.start_time, message.get('target_power'))
+            elif msg_type == "connection_status":
+                self.lbl_status.setText(f"Status: {message.get('device_type').upper()} {message.get('status')}")
+            elif msg_type == "status_update" or msg_type == "workout_finished":
+                self.lbl_status.setText(f"Status: {message.get('message')}")
+                if msg_type == "workout_finished": self.progress.setValue(100)
 
-    def handle_data_update(self, message):
-        msg_type = message.get("type")
-        elapsed_time = time.time() - self.start_time if self.start_time else 0
-        if msg_type == "hr_update":
-            self.lbl_hr.config(text=f"HR: {message.get('value')} BPM")
-            self.graph.add_data_point("hr", elapsed_time, message.get('value'))
-        elif msg_type == "power_update":
-            self.lbl_power.config(text=f"Power: {message.get('value')} W")
-            self.graph.add_data_point("power", elapsed_time, message.get('value'))
-        elif msg_type == "csc_update":
-            self.lbl_cadence.config(text=f"Cadence: {message.get('crank_rev', 0)} RPM")
-            self.graph.add_data_point("cadence", elapsed_time, message.get('crank_rev', 0))
-        elif msg_type == "workout_update":
-            self.lbl_target_power.config(text=f"Target Power: {message.get('target_power')} W")
-            self.progress['value'] = message.get('progress', 0)
-            self.graph.add_data_point("target_power", elapsed_time, message.get('target_power'))
-
-    def handle_status_update(self, message):
-        msg_type = message.get("type")
-        if msg_type == "connection_status":
-            self.lbl_status.config(text=f"Status: {message.get('device_type').upper()} {message.get('status')}")
-        elif msg_type == "workout_finished":
-            self.lbl_status.config(text=f"Status: {message.get('message')}")
-            self.progress['value'] = 100
-        else:
-            self.lbl_status.config(text=f"Status: {message.get('message')}")
+    def handle_scan_complete(self, devices_by_role):
+        self.devices_by_role = devices_by_role
+        self.lbl_status.setText("Status: Scan complete.")
+        for role, listbox in self.device_lists.items():
+            listbox.clear()
+            for device in devices_by_role.get(role, []):
+                listbox.addItem(f"{device.name or 'Unknown'} ({device.address})")
 
     def update_graph(self):
         if self.workout_manager._is_running:
             self.graph.draw_plot()
-        self.after(1000, self.update_graph)
 
-    def start_asyncio_loop(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-
-    def load_erg_file(self):
-        filepath = filedialog.askopenfilename(filetypes=[("ERG Files", "*.erg"), ("All files", "*.*")])
-        if not filepath: return
-        workout_data = parse_erg(filepath)
-        if workout_data:
-            self.workout_manager.load_workout(workout_data)
-            self.lbl_status.config(text=f"Status: Loaded workout from {filepath}")
-        else:
-            self.lbl_status.config(text=f"Status: Failed to load workout from {filepath}")
-
-    def start_scan(self):
-        self.lbl_status.config(text="Status: Scanning...")
-        for listbox in self.device_lists.values(): listbox.delete(0, tk.END)
-        asyncio.run_coroutine_threadsafe(self.cycling_manager.scan(), self.loop)
-
-    def start_connect(self):
-        devices_to_connect = []
-        for role, listbox in self.device_lists.items():
-            selection_indices = listbox.curselection()
-            if selection_indices:
-                device_index = selection_indices[0]
-                device = self.devices_by_role[role][device_index]
-                devices_to_connect.append((role, device.address))
-        if devices_to_connect:
-            asyncio.run_coroutine_threadsafe(self.cycling_manager.connect_all_devices(devices_to_connect), self.loop)
-        else:
-            self.lbl_status.config(text="Status: No devices selected to connect.")
-
-    def handle_scan_complete(self, devices_by_role):
-        self.devices_by_role = devices_by_role
-        self.lbl_status.config(text=f"Status: Scan complete.")
-        for role, listbox in self.device_lists.items():
-            listbox.delete(0, tk.END)
-            for device in devices_by_role.get(role, []):
-                display_name = f"{device.name or 'Unknown'} ({device.address})"
-                listbox.insert(tk.END, display_name)
-
-    def on_closing(self):
+    def closeEvent(self, event):
         print("Closing application...")
-        if self.loop.is_running():
-            self.workout_manager.stop_workout()
-            if self.workout_task: self.workout_task.cancel()
-            asyncio.run_coroutine_threadsafe(self.cycling_manager.disconnect(), self.loop)
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        self.destroy()
-
-if __name__ == '__main__':
-    app = App()
-    app.mainloop()
+        self.workout_manager.stop_workout()
+        self.loop.create_task(self.cycling_manager.disconnect())
+        super().closeEvent(event)
