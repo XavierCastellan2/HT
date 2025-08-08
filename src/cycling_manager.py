@@ -17,12 +17,41 @@ class CyclingManager:
         self.clients: Dict[str, BleakClient] = {}
         self.services: Dict[str, object] = {}
         self.discovered_devices: List[BleakClient] = []
+        self.role_uuids = {
+            "hrm": "0000180d-0000-1000-8000-00805f9b34fb",
+            "csc": "00001816-0000-1000-8000-00805f9b34fb",
+            "power": "00001818-0000-1000-8000-00805f9b34fb",
+            "ftms": "00001826-0000-1000-8000-00805f9b34fb",
+            "tacx": "6e40fec1-b5a3-f393-e0a9-e50e24dcca9e", # Tacx FE-C over BLE
+        }
 
     async def scan(self, timeout=5.0):
-        """Scans for BLE devices and informs the UI."""
+        """Scans for BLE devices and informs the UI with a filtered list."""
         print(f"Scanning for devices for {timeout} seconds...")
-        self.discovered_devices = await BleakScanner.discover(timeout=timeout)
-        self.ui_queue.put({"type": "scan_complete", "devices": self.discovered_devices})
+
+        devices_found = {}
+        def detection_callback(device, advertisement_data):
+            # Store all unique devices found
+            if device.address not in devices_found:
+                devices_found[device.address] = (device, advertisement_data)
+
+        scanner = BleakScanner(detection_callback=detection_callback)
+        await scanner.start()
+        await asyncio.sleep(timeout)
+        await scanner.stop()
+
+        # Filter devices by role
+        devices_by_role = {role: [] for role in self.role_uuids.keys()}
+        all_devices = []
+
+        for device, ad_data in devices_found.values():
+            all_devices.append(device)
+            for role, uuid in self.role_uuids.items():
+                if uuid.lower() in [s.lower() for s in ad_data.service_uuids]:
+                    devices_by_role[role].append(device)
+
+        self.discovered_devices = all_devices
+        self.ui_queue.put({"type": "scan_complete", "devices_by_role": devices_by_role})
 
     async def connect_all_devices(self, devices_to_connect: List[tuple]):
         """Connects to a list of devices sequentially."""
@@ -49,14 +78,12 @@ class CyclingManager:
             print(f"Successfully connected to {address} as {device_type}.")
         except Exception as e:
             print(f"Failed to connect to {address}: {e}")
-            # Ensure failed client is removed
             if device_type in self.clients:
                 del self.clients[device_type]
 
         self.ui_queue.put({"type": "connection_status", "device_type": device_type, "status": status, "address": address})
 
     def _initialize_service(self, device_type, client):
-        """Initializes and returns the correct pycycling service object."""
         if device_type == "hrm":
             service = HeartRateService(client)
             service.set_hr_measurement_handler(self._handle_hr_update)
@@ -80,34 +107,24 @@ class CyclingManager:
         return None
 
     async def _enable_service_notifications(self, device_type, service):
-        """Enables notifications for the given service."""
         print(f"Enabling notifications for {device_type}...")
-        if device_type == "hrm":
-            await service.enable_hr_measurement_notifications()
-        elif device_type == "csc":
-            await service.enable_csc_measurement_notifications()
-        elif device_type == "power":
-            await service.enable_cycling_power_measurement_notifications()
-        elif device_type == "ftms":
-            await service.enable_indoor_bike_data_notify()
-        elif device_type == "tacx":
-            await service.enable_fec_notifications()
+        if device_type == "hrm": await service.enable_hr_measurement_notifications()
+        elif device_type == "csc": await service.enable_csc_measurement_notifications()
+        elif device_type == "power": await service.enable_cycling_power_measurement_notifications()
+        elif device_type == "ftms": await service.enable_indoor_bike_data_notify()
+        elif device_type == "tacx": await service.enable_fec_notifications()
 
     async def disconnect(self):
-        """Disconnects all connected clients."""
         for client in self.clients.values():
-            if client.is_connected:
-                await client.disconnect()
+            if client.is_connected: await client.disconnect()
         self.clients.clear()
         self.services.clear()
         print("All devices disconnected.")
 
     async def set_target_power(self, power: int):
-        """Sets the target power on the connected trainer."""
         trainer_service = self.services.get("ftms") or self.services.get("tacx")
         if trainer_service:
             try:
-                # For FTMS, we should request control first
                 if isinstance(trainer_service, FitnessMachineService):
                     await trainer_service.request_control()
                 await trainer_service.set_target_power(power)
@@ -117,21 +134,12 @@ class CyclingManager:
         else:
             print("No trainer connected.")
 
-    # --- Notification Handlers ---
-    def _handle_hr_update(self, measurement):
-        self.ui_queue.put({"type": "hr_update", "value": measurement.bpm})
-
-    def _handle_csc_update(self, measurement):
-        self.ui_queue.put({"type": "csc_update", "crank_rev": measurement.cumulative_crank_revolutions})
-
-    def _handle_power_update(self, measurement):
-        self.ui_queue.put({"type": "power_update", "value": measurement.instantaneous_power})
-
-    def _handle_ftms_update(self, data):
-        self.ui_queue.put({"type": "power_update", "value": data.instantaneous_power})
-        self.ui_queue.put({"type": "csc_update", "crank_rev": data.instantaneous_cadence})
-
-    def _handle_tacx_update(self, data):
-        """Handles the combined data page from a Tacx trainer."""
-        self.ui_queue.put({"type": "power_update", "value": data.instantaneous_power})
-        self.ui_queue.put({"type": "csc_update", "crank_rev": data.instantaneous_cadence})
+    def _handle_hr_update(self, m): self.ui_queue.put({"type": "hr_update", "value": m.bpm})
+    def _handle_csc_update(self, m): self.ui_queue.put({"type": "csc_update", "crank_rev": m.cumulative_crank_revolutions})
+    def _handle_power_update(self, m): self.ui_queue.put({"type": "power_update", "value": m.instantaneous_power})
+    def _handle_ftms_update(self, d):
+        self.ui_queue.put({"type": "power_update", "value": d.instantaneous_power})
+        self.ui_queue.put({"type": "csc_update", "crank_rev": d.instantaneous_cadence})
+    def _handle_tacx_update(self, d):
+        self.ui_queue.put({"type": "power_update", "value": d.instantaneous_power})
+        self.ui_queue.put({"type": "csc_update", "crank_rev": d.instantaneous_cadence})

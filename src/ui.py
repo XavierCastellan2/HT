@@ -26,6 +26,7 @@ class App(tk.Tk):
         self.cycling_manager = CyclingManager(self.queue)
         self.workout_manager = WorkoutManager(self.cycling_manager, self.queue)
         self.device_lists = {}
+        self.devices_by_role = {} # To store filtered device objects
 
         self.create_ui()
         self.after(100, self.check_queue)
@@ -36,19 +37,8 @@ class App(tk.Tk):
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # --- Top-level Frames ---
         controls_frame = ttk.LabelFrame(main_frame, text="Controls")
-        devices_frame = ttk.LabelFrame(main_frame, text="Devices")
-        info_frame = ttk.LabelFrame(main_frame, text="Info")
-        graph_frame = ttk.LabelFrame(main_frame, text="Training Graph")
-
-        # --- Layout Order ---
         controls_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        devices_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        info_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        graph_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # --- Populate Controls Frame ---
         self.btn_load_erg = ttk.Button(controls_frame, text="Load ERG File", command=self.load_erg_file)
         self.btn_load_erg.pack(side=tk.LEFT, padx=5, pady=5)
         self.btn_scan = ttk.Button(controls_frame, text="Scan for Devices", command=self.start_scan)
@@ -58,7 +48,8 @@ class App(tk.Tk):
         self.btn_start = ttk.Button(controls_frame, text="Start Workout", command=self.start_workout)
         self.btn_start.pack(side=tk.LEFT, padx=5, pady=5)
 
-        # --- Populate Devices Frame ---
+        devices_frame = ttk.LabelFrame(main_frame, text="Devices")
+        devices_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
         roles = ["hrm", "csc", "power", "ftms", "tacx"]
         for i, role in enumerate(roles):
             ttk.Label(devices_frame, text=f"{role.upper()}:").grid(row=0, column=i, padx=10, pady=2, sticky=tk.W)
@@ -67,7 +58,8 @@ class App(tk.Tk):
             self.device_lists[role] = listbox
         devices_frame.grid_columnconfigure(list(range(len(roles))), weight=1)
 
-        # --- Populate Info Frame ---
+        info_frame = ttk.LabelFrame(main_frame, text="Info")
+        info_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
         data_frame = ttk.LabelFrame(info_frame, text="Live Data")
         data_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         self.lbl_hr = ttk.Label(data_frame, text="HR: -- BPM", font=("Helvetica", 12))
@@ -86,7 +78,8 @@ class App(tk.Tk):
         self.progress = ttk.Progressbar(status_frame, orient=tk.HORIZONTAL, length=100, mode='determinate')
         self.progress.pack(fill=tk.X, expand=True, padx=10, pady=5)
 
-        # --- Populate Graph Frame ---
+        graph_frame = ttk.LabelFrame(main_frame, text="Training Graph")
+        graph_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.graph = TrainingGraph(graph_frame)
         self.graph.pack(fill=tk.BOTH, expand=True)
 
@@ -105,32 +98,40 @@ class App(tk.Tk):
         while not self.queue.empty():
             message = self.queue.get_nowait()
             msg_type = message.get("type")
-            elapsed_time = time.time() - self.start_time if self.start_time else 0
-
-            if msg_type == "hr_update":
-                self.lbl_hr.config(text=f"HR: {message.get('value')} BPM")
-                self.graph.add_data_point("hr", elapsed_time, message.get('value'))
-            elif msg_type == "power_update":
-                self.lbl_power.config(text=f"Power: {message.get('value')} W")
-                self.graph.add_data_point("power", elapsed_time, message.get('value'))
-            elif msg_type == "csc_update":
-                self.lbl_cadence.config(text=f"Cadence: {message.get('crank_rev', 0)} RPM")
-                self.graph.add_data_point("cadence", elapsed_time, message.get('crank_rev', 0))
-            elif msg_type == "workout_update":
-                self.lbl_target_power.config(text=f"Target Power: {message.get('target_power')} W")
-                self.progress['value'] = message.get('progress', 0)
-                self.graph.add_data_point("target_power", elapsed_time, message.get('target_power'))
-            elif msg_type == "scan_complete":
-                self.handle_scan_complete(message.get("devices", []))
-            elif msg_type == "connection_status":
-                self.handle_connection_status(message)
-            elif msg_type == "status_update":
-                self.lbl_status.config(text=f"Status: {message.get('message')}")
-            elif msg_type == "workout_finished":
-                self.lbl_status.config(text=f"Status: {message.get('message')}")
-                self.progress['value'] = 100
-
+            if msg_type == "scan_complete":
+                self.handle_scan_complete(message.get("devices_by_role", {}))
+            elif msg_type in ["hr_update", "power_update", "csc_update", "workout_update"]:
+                self.handle_data_update(message)
+            elif msg_type in ["connection_status", "status_update", "workout_finished"]:
+                self.handle_status_update(message)
         self.after(100, self.check_queue)
+
+    def handle_data_update(self, message):
+        msg_type = message.get("type")
+        elapsed_time = time.time() - self.start_time if self.start_time else 0
+        if msg_type == "hr_update":
+            self.lbl_hr.config(text=f"HR: {message.get('value')} BPM")
+            self.graph.add_data_point("hr", elapsed_time, message.get('value'))
+        elif msg_type == "power_update":
+            self.lbl_power.config(text=f"Power: {message.get('value')} W")
+            self.graph.add_data_point("power", elapsed_time, message.get('value'))
+        elif msg_type == "csc_update":
+            self.lbl_cadence.config(text=f"Cadence: {message.get('crank_rev', 0)} RPM")
+            self.graph.add_data_point("cadence", elapsed_time, message.get('crank_rev', 0))
+        elif msg_type == "workout_update":
+            self.lbl_target_power.config(text=f"Target Power: {message.get('target_power')} W")
+            self.progress['value'] = message.get('progress', 0)
+            self.graph.add_data_point("target_power", elapsed_time, message.get('target_power'))
+
+    def handle_status_update(self, message):
+        msg_type = message.get("type")
+        if msg_type == "connection_status":
+            self.lbl_status.config(text=f"Status: {message.get('device_type').upper()} {message.get('status')}")
+        elif msg_type == "workout_finished":
+            self.lbl_status.config(text=f"Status: {message.get('message')}")
+            self.progress['value'] = 100
+        else:
+            self.lbl_status.config(text=f"Status: {message.get('message')}")
 
     def update_graph(self):
         if self.workout_manager._is_running:
@@ -161,24 +162,22 @@ class App(tk.Tk):
         for role, listbox in self.device_lists.items():
             selection_indices = listbox.curselection()
             if selection_indices:
-                device_address = listbox.get(selection_indices[0]).split('(')[-1].strip(')')
-                devices_to_connect.append((role, device_address))
+                device_index = selection_indices[0]
+                device = self.devices_by_role[role][device_index]
+                devices_to_connect.append((role, device.address))
         if devices_to_connect:
             asyncio.run_coroutine_threadsafe(self.cycling_manager.connect_all_devices(devices_to_connect), self.loop)
         else:
             self.lbl_status.config(text="Status: No devices selected to connect.")
 
-    def handle_scan_complete(self, devices):
-        self.lbl_status.config(text=f"Status: Scan complete. Found {len(devices)} devices.")
-        for listbox in self.device_lists.values(): listbox.delete(0, tk.END)
-        for device in devices:
-            display_name = f"{device.name or 'Unknown'} ({device.address})"
-            for listbox in self.device_lists.values(): listbox.insert(tk.END, display_name)
-
-    def handle_connection_status(self, message):
-        role = message.get("device_type")
-        status = message.get("status")
-        self.lbl_status.config(text=f"Status: {role.upper()} {status}")
+    def handle_scan_complete(self, devices_by_role):
+        self.devices_by_role = devices_by_role
+        self.lbl_status.config(text=f"Status: Scan complete.")
+        for role, listbox in self.device_lists.items():
+            listbox.delete(0, tk.END)
+            for device in devices_by_role.get(role, []):
+                display_name = f"{device.name or 'Unknown'} ({device.address})"
+                listbox.insert(tk.END, display_name)
 
     def on_closing(self):
         print("Closing application...")
