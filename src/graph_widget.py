@@ -46,16 +46,25 @@ class TrainingGraph(ttk.Frame):
         if line:
             line.set_data(np.append(line.get_xdata(), x), np.append(line.get_ydata(), y))
 
+    def set_time_axis_range(self, total_time: int):
+        """Sets the x-axis limit to a fixed value."""
+        self.ax1.set_xlim(0, total_time)
+        self.ax2.set_xlim(0, total_time)
+        self.draw_plot()
+
     def draw_plot(self):
-        """Redraws the plot with new data and updated axes."""
+        """Redraws the plot, autoscaling the y-axes only."""
         self.ax1.relim()
-        self.ax1.autoscale_view()
+        self.ax1.autoscale_view(scalex=False, scaley=True)
         self.ax2.relim()
-        self.ax2.autoscale_view()
+        self.ax2.autoscale_view(scalex=False, scaley=True)
         self.canvas.draw()
 
     def clear_plot(self):
         """Clears all data from the plot."""
         for line in self.series.values():
             line.set_data([], [])
+        # Reset axes to autoscale again on the next run
+        self.ax1.autoscale_view(True, True, True)
+        self.ax2.autoscale_view(True, True, True)
         self.draw_plot()

@@ -42,13 +42,11 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def create_ui(self):
-        # ... (Same controls and device frames as before)
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         controls_frame = ttk.LabelFrame(main_frame, text="Controls")
         controls_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
-        # ... buttons ...
         self.btn_load_erg = ttk.Button(controls_frame, text="Load ERG File", command=self.load_erg_file)
         self.btn_load_erg.pack(side=tk.LEFT, padx=5, pady=5)
         self.btn_scan = ttk.Button(controls_frame, text="Scan for Devices", command=self.start_scan)
@@ -68,13 +66,11 @@ class App(tk.Tk):
             self.device_lists[role] = listbox
         devices_frame.grid_columnconfigure(list(range(len(roles))), weight=1)
 
-        # --- Graph Frame ---
         graph_frame = ttk.LabelFrame(main_frame, text="Training Graph")
         graph_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.graph = TrainingGraph(graph_frame)
         self.graph.pack(fill=tk.BOTH, expand=True)
 
-        # --- Live Data & Status Frame ---
         bottom_frame = ttk.Frame(main_frame)
         bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
 
@@ -96,61 +92,6 @@ class App(tk.Tk):
         self.progress = ttk.Progressbar(status_frame, orient=tk.HORIZONTAL, length=100, mode='determinate')
         self.progress.pack(fill=tk.X, expand=True, padx=10, pady=5)
 
-    def start_workout(self):
-        # Reset data stores
-        self.start_time = time.time()
-        self.power_data = []
-        self.target_power_data = []
-        self.hr_data = []
-        self.cadence_data = []
-        self.graph.clear_plot()
-
-        self.lbl_status.config(text="Status: Starting workout...")
-        self.workout_task = asyncio.run_coroutine_threadsafe(self.workout_manager.run_workout(), self.loop)
-
-    def check_queue(self):
-        while not self.queue.empty():
-            message = self.queue.get_nowait()
-            msg_type = message.get("type")
-            elapsed_time = time.time() - self.start_time if self.start_time else 0
-
-            if msg_type == "hr_update":
-                val = message.get('value')
-                self.lbl_hr.config(text=f"HR: {val} BPM")
-                self.graph.add_data_point("hr", elapsed_time, val)
-            elif msg_type == "power_update":
-                val = message.get('value')
-                self.lbl_power.config(text=f"Power: {val} W")
-                self.graph.add_data_point("power", elapsed_time, val)
-            elif msg_type == "csc_update":
-                val = message.get('crank_rev', 0) # simplified
-                self.lbl_cadence.config(text=f"Cadence: {val} RPM")
-                self.graph.add_data_point("cadence", elapsed_time, val)
-            elif msg_type == "workout_update":
-                val = message.get('target_power')
-                self.lbl_target_power.config(text=f"Target Power: {val} W")
-                self.progress['value'] = message.get('progress', 0)
-                self.graph.add_data_point("target_power", elapsed_time, val)
-            # ... other handlers ...
-            elif msg_type == "scan_complete":
-                self.handle_scan_complete(message.get("devices", []))
-            elif msg_type == "connection_status":
-                self.handle_connection_status(message)
-            elif msg_type == "status_update":
-                self.lbl_status.config(text=f"Status: {message.get('message')}")
-            elif msg_type == "workout_finished":
-                self.lbl_status.config(text=f"Status: {message.get('message')}")
-                self.progress['value'] = 100
-
-        self.after(100, self.check_queue)
-
-    def update_graph(self):
-        """Periodically redraws the graph."""
-        if self.workout_manager._is_running:
-            self.graph.draw_plot()
-        self.after(1000, self.update_graph)
-
-    # ... (rest of the methods are the same)
     def start_asyncio_loop(self):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
@@ -181,6 +122,55 @@ class App(tk.Tk):
             asyncio.run_coroutine_threadsafe(self.cycling_manager.connect_all_devices(devices_to_connect), self.loop)
         else:
             self.lbl_status.config(text="Status: No devices selected to connect.")
+
+    def start_workout(self):
+        if not self.workout_manager.workout:
+            self.lbl_status.config(text="Status: Please load an ERG file first.")
+            return
+
+        # Reset data stores and graph
+        self.start_time = time.time()
+        self.graph.clear_plot()
+
+        # Set fixed time axis for the graph
+        total_duration = self.workout_manager.workout[-1][0]
+        self.graph.set_time_axis_range(total_duration)
+
+        self.lbl_status.config(text="Status: Starting workout...")
+        self.workout_task = asyncio.run_coroutine_threadsafe(self.workout_manager.run_workout(), self.loop)
+
+    def check_queue(self):
+        while not self.queue.empty():
+            message = self.queue.get_nowait()
+            msg_type = message.get("type")
+            elapsed_time = time.time() - self.start_time if self.start_time else 0
+
+            if msg_type == "hr_update":
+                self.graph.add_data_point("hr", elapsed_time, message.get('value'))
+            elif msg_type == "power_update":
+                self.graph.add_data_point("power", elapsed_time, message.get('value'))
+            elif msg_type == "csc_update":
+                self.graph.add_data_point("cadence", elapsed_time, message.get('crank_rev', 0))
+            elif msg_type == "workout_update":
+                self.lbl_target_power.config(text=f"Target Power: {message.get('target_power')} W")
+                self.progress['value'] = message.get('progress', 0)
+                self.graph.add_data_point("target_power", elapsed_time, message.get('target_power'))
+            elif msg_type == "scan_complete":
+                self.handle_scan_complete(message.get("devices", []))
+            elif msg_type == "connection_status":
+                self.handle_connection_status(message)
+            elif msg_type == "status_update":
+                self.lbl_status.config(text=f"Status: {message.get('message')}")
+            elif msg_type == "workout_finished":
+                self.lbl_status.config(text=f"Status: {message.get('message')}")
+                self.progress['value'] = 100
+
+        self.after(100, self.check_queue)
+
+    def update_graph(self):
+        if self.workout_manager._is_running:
+            self.graph.draw_plot()
+        self.after(1000, self.update_graph)
 
     def handle_scan_complete(self, devices):
         self.lbl_status.config(text=f"Status: Scan complete. Found {len(devices)} devices.")
