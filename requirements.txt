@@ -1,5 +1,6 @@
 bleak
 pycycling
-matplotlib
-PySide6
-qasync
+fastapi
+uvicorn
+websockets
+pywebview

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLE Training App</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>BLE Training App</h1>
+        </header>
+
+        <section class="controls-panel card">
+            <h2>Controls</h2>
+            <button id="btn-load-erg">Load ERG</button>
+            <button id="btn-scan">Scan</button>
+            <button id="btn-connect">Connect</button>
+            <button id="btn-disconnect">Disconnect</button>
+            <button id="btn-start">Start Workout</button>
+        </section>
+
+        <section class="devices-panel card">
+            <h2>Devices</h2>
+            <div class="device-grid" id="device-grid">
+                <!-- Device lists will be populated by JS -->
+            </div>
+        </section>
+
+        <section class="info-panel card">
+            <h2>Info & Status</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <span class="label">Target Power</span>
+                    <span id="val-target-power" class="value">-- W</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Power</span>
+                    <span id="val-power" class="value">-- W</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Heart Rate</span>
+                    <span id="val-hr" class="value">-- BPM</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">Cadence</span>
+                    <span id="val-cadence" class="value">-- RPM</span>
+                </div>
+            </div>
+            <div class="status-bar">
+                <span id="status-text">Status: Idle</span>
+                <progress id="progress-bar" value="0" max="100"></progress>
+            </div>
+        </section>
+
+        <section class="graph-panel card">
+            <h2>Training Graph</h2>
+            <canvas id="training-chart"></canvas>
+        </section>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

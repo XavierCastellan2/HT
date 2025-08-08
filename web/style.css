@@ -1,0 +1,139 @@
+:root {
+    --bg-color: #1a1a1a;
+    --surface-color: #2a2a2a;
+    --primary-color: #007bff;
+    --text-color: #e0e0e0;
+    --label-color: #a0a0a0;
+    --border-color: #444;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    max-width: 1200px;
+    margin: auto;
+}
+
+header h1 {
+    text-align: center;
+    color: var(--primary-color);
+}
+
+.card {
+    background-color: var(--surface-color);
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid var(--border-color);
+}
+
+.card h2 {
+    margin-top: 0;
+    border-bottom: 2px solid var(--primary-color);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+.controls-panel button {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1em;
+    transition: background-color 0.3s;
+}
+
+.controls-panel button:hover {
+    background-color: #0056b3;
+}
+
+.device-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.device-grid h3 {
+    margin: 0 0 10px 0;
+    color: var(--label-color);
+}
+
+.device-list {
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    height: 150px;
+    overflow-y: auto;
+    padding: 5px;
+}
+
+.device-list div {
+    padding: 8px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.device-list div:hover {
+    background-color: #3a3a3a;
+}
+
+.device-list div.selected {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.info-item .label {
+    display: block;
+    color: var(--label-color);
+    font-size: 0.9em;
+}
+
+.info-item .value {
+    display: block;
+    font-size: 2em;
+    font-weight: bold;
+}
+
+.status-bar {
+    margin-top: 10px;
+}
+
+#status-text {
+    font-style: italic;
+    color: var(--label-color);
+}
+
+progress {
+    width: 100%;
+    height: 10px;
+    -webkit-appearance: none;
+    appearance: none;
+    border: none;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+    background-color: #444;
+}
+
+progress::-webkit-progress-value {
+    background-color: var(--primary-color);
+}

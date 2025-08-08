@@ -1,5 +1,4 @@
 import asyncio
-import queue
 from bleak import BleakScanner, BleakClient
 from typing import Optional, Dict, List
 
@@ -8,12 +7,13 @@ from pycycling.cycling_speed_cadence_service import CyclingSpeedCadenceService
 from pycycling.cycling_power_service import CyclingPowerService
 from pycycling.fitness_machine_service import FitnessMachineService
 from pycycling.tacx_trainer_control import TacxTrainerControl
+from src.websocket_manager import WebSocketManager
 
 class CyclingManager:
     """A manager for all BLE cycling device interactions using pycycling."""
 
-    def __init__(self, ui_queue: queue.Queue):
-        self.ui_queue = ui_queue
+    def __init__(self, ws_manager: WebSocketManager):
+        self.ws_manager = ws_manager
         self.clients: Dict[str, BleakClient] = {}
         self.services: Dict[str, object] = {}
         self.discovered_devices: List[BleakClient] = []
@@ -22,16 +22,15 @@ class CyclingManager:
             "csc": "00001816-0000-1000-8000-00805f9b34fb",
             "power": "00001818-0000-1000-8000-00805f9b34fb",
             "ftms": "00001826-0000-1000-8000-00805f9b34fb",
-            "tacx": "6e40fec1-b5a3-f393-e0a9-e50e24dcca9e", # Tacx FE-C over BLE
+            "tacx": "6e40fec1-b5a3-f393-e0a9-e50e24dcca9e",
         }
 
     async def scan(self, timeout=5.0):
-        """Scans for BLE devices and informs the UI with a filtered list."""
+        """Scans for BLE devices and broadcasts the results via WebSocket."""
         print(f"Scanning for devices for {timeout} seconds...")
 
         devices_found = {}
         def detection_callback(device, advertisement_data):
-            # Store all unique devices found
             if device.address not in devices_found:
                 devices_found[device.address] = (device, advertisement_data)
 
@@ -40,28 +39,25 @@ class CyclingManager:
         await asyncio.sleep(timeout)
         await scanner.stop()
 
-        # Filter devices by role
         devices_by_role = {role: [] for role in self.role_uuids.keys()}
-        all_devices = []
 
+        # BleakDevice is not directly JSON serializable, so we create dicts
         for device, ad_data in devices_found.values():
-            all_devices.append(device)
             for role, uuid in self.role_uuids.items():
                 if uuid.lower() in [s.lower() for s in ad_data.service_uuids]:
-                    devices_by_role[role].append(device)
+                    devices_by_role[role].append(
+                        {"name": device.name or "Unknown", "address": device.address}
+                    )
 
-        self.discovered_devices = all_devices
-        self.ui_queue.put({"type": "scan_complete", "devices_by_role": devices_by_role})
+        await self.ws_manager.broadcast({"type": "scan_complete", "devices_by_role": devices_by_role})
 
     async def connect_all_devices(self, devices_to_connect: List[tuple]):
-        """Connects to a list of devices sequentially."""
-        self.ui_queue.put({"type": "status_update", "message": "Connecting to devices..."})
+        await self.ws_manager.broadcast({"type": "status_update", "message": "Connecting to devices..."})
         for device_type, address in devices_to_connect:
             await self.connect_to_device(device_type, address)
-        self.ui_queue.put({"type": "status_update", "message": "Device connection process complete."})
+        await self.ws_manager.broadcast({"type": "status_update", "message": "Device connection process complete."})
 
     async def connect_to_device(self, device_type: str, address: str):
-        """Connects to a device, initializes the pycycling service, and enables notifications."""
         print(f"Attempting to connect to {address} as {device_type}...")
         status = "Failed"
         try:
@@ -81,9 +77,10 @@ class CyclingManager:
             if device_type in self.clients:
                 del self.clients[device_type]
 
-        self.ui_queue.put({"type": "connection_status", "device_type": device_type, "status": status, "address": address})
+        await self.ws_manager.broadcast({"type": "connection_status", "device_type": device_type, "status": status, "address": address})
 
     def _initialize_service(self, device_type, client):
+        # ... (same as before)
         if device_type == "hrm":
             service = HeartRateService(client)
             service.set_hr_measurement_handler(self._handle_hr_update)
@@ -107,6 +104,7 @@ class CyclingManager:
         return None
 
     async def _enable_service_notifications(self, device_type, service):
+        # ... (same as before)
         print(f"Enabling notifications for {device_type}...")
         if device_type == "hrm": await service.enable_hr_measurement_notifications()
         elif device_type == "csc": await service.enable_csc_measurement_notifications()
@@ -120,8 +118,11 @@ class CyclingManager:
         self.clients.clear()
         self.services.clear()
         print("All devices disconnected.")
+        await self.ws_manager.broadcast({"type": "status_update", "message": "All devices disconnected."})
+
 
     async def set_target_power(self, power: int):
+        # ... (same as before)
         trainer_service = self.services.get("ftms") or self.services.get("tacx")
         if trainer_service:
             try:
@@ -134,12 +135,12 @@ class CyclingManager:
         else:
             print("No trainer connected.")
 
-    def _handle_hr_update(self, m): self.ui_queue.put({"type": "hr_update", "value": m.bpm})
-    def _handle_csc_update(self, m): self.ui_queue.put({"type": "csc_update", "crank_rev": m.cumulative_crank_revolutions})
-    def _handle_power_update(self, m): self.ui_queue.put({"type": "power_update", "value": m.instantaneous_power})
+    def _handle_hr_update(self, m): asyncio.create_task(self.ws_manager.broadcast({"type": "hr_update", "value": m.bpm}))
+    def _handle_csc_update(self, m): asyncio.create_task(self.ws_manager.broadcast({"type": "csc_update", "crank_rev": m.cumulative_crank_revolutions}))
+    def _handle_power_update(self, m): asyncio.create_task(self.ws_manager.broadcast({"type": "power_update", "value": m.instantaneous_power}))
     def _handle_ftms_update(self, d):
-        self.ui_queue.put({"type": "power_update", "value": d.instantaneous_power})
-        self.ui_queue.put({"type": "csc_update", "crank_rev": d.instantaneous_cadence})
+        asyncio.create_task(self.ws_manager.broadcast({"type": "power_update", "value": d.instantaneous_power}))
+        asyncio.create_task(self.ws_manager.broadcast({"type": "csc_update", "crank_rev": d.instantaneous_cadence}))
     def _handle_tacx_update(self, d):
-        self.ui_queue.put({"type": "power_update", "value": d.instantaneous_power})
-        self.ui_queue.put({"type": "csc_update", "crank_rev": d.instantaneous_cadence})
+        asyncio.create_task(self.ws_manager.broadcast({"type": "power_update", "value": d.instantaneous_power}))
+        asyncio.create_task(self.ws_manager.broadcast({"type": "csc_update", "crank_rev": d.instantaneous_cadence}))

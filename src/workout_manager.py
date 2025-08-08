@@ -1,21 +1,21 @@
 import asyncio
-import queue
 from typing import List, Tuple, Optional
 from src.cycling_manager import CyclingManager
+from src.websocket_manager import WebSocketManager
 
 class WorkoutManager:
     """Manages the execution of a workout session."""
 
-    def __init__(self, cycling_manager: CyclingManager, ui_queue: queue.Queue):
+    def __init__(self, cycling_manager: CyclingManager, ws_manager: WebSocketManager):
         """
         Initializes the WorkoutManager.
 
         Args:
             cycling_manager: An instance of the CyclingManager.
-            ui_queue: A queue to send updates to the UI thread.
+            ws_manager: An instance of the WebSocketManager to broadcast updates.
         """
         self.cycling_manager = cycling_manager
-        self.ui_queue = ui_queue
+        self.ws_manager = ws_manager
         self.workout: List[Tuple[int, int]] = []
         self._is_running = False
 
@@ -28,7 +28,7 @@ class WorkoutManager:
         """The main async coroutine for the workout session."""
         if not self.workout:
             print("Cannot start: No workout loaded.")
-            self.ui_queue.put({"type": "status_update", "message": "Error: No workout loaded."})
+            await self.ws_manager.broadcast({"type": "status_update", "message": "Error: No workout loaded."})
             return
 
         if self._is_running:
@@ -36,7 +36,7 @@ class WorkoutManager:
             return
 
         self._is_running = True
-        self.ui_queue.put({"type": "status_update", "message": "Workout started."})
+        await self.ws_manager.broadcast({"type": "status_update", "message": "Workout started."})
         print("Starting workout loop...")
         start_time = asyncio.get_event_loop().time()
         total_duration = self.workout[-1][0] if self.workout else 1
@@ -53,7 +53,7 @@ class WorkoutManager:
                     await asyncio.sleep(time_to_wait)
 
                 progress = (time_offset / total_duration) * 100
-                self.ui_queue.put({"type": "workout_update", "target_power": power, "progress": progress})
+                await self.ws_manager.broadcast({"type": "workout_update", "target_power": power, "progress": progress})
 
                 await self.cycling_manager.set_target_power(power)
         except asyncio.CancelledError:
@@ -61,7 +61,7 @@ class WorkoutManager:
         finally:
             self._is_running = False
             if asyncio.current_task() and not asyncio.current_task().cancelled():
-                 self.ui_queue.put({"type": "workout_finished", "message": "Workout finished!"})
+                 await self.ws_manager.broadcast({"type": "workout_finished", "message": "Workout finished!"})
             print("Workout loop finished.")
 
     def stop_workout(self):
@@ -69,4 +69,4 @@ class WorkoutManager:
         if self._is_running:
             self._is_running = False
             print("Workout stop requested.")
-            self.ui_queue.put({"type": "status_update", "message": "Workout stopped."})
+            asyncio.create_task(self.ws_manager.broadcast({"type": "status_update", "message": "Workout stopped."}))
