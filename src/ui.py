@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton, QGroupBox, QLabel, QListWidget, QProgressBar, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 
 from src.cycling_manager import CyclingManager
 from src.erg_parser import parse_erg
@@ -45,7 +46,6 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout()
         main_widget.setLayout(main_layout)
 
-        # --- Controls ---
         controls_group = QGroupBox("Controls")
         controls_layout = QHBoxLayout()
         controls_group.setLayout(controls_layout)
@@ -69,7 +69,6 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.btn_disconnect)
         controls_layout.addStretch()
 
-        # --- Devices ---
         devices_group = QGroupBox("Devices")
         devices_layout = QGridLayout()
         devices_group.setLayout(devices_layout)
@@ -81,10 +80,16 @@ class MainWindow(QMainWindow):
             self.device_lists[role] = list_widget
             devices_layout.addWidget(list_widget, 1, i)
 
-        # --- Info & Status ---
         info_group = QGroupBox("Info & Status")
         info_layout = QGridLayout()
         info_group.setLayout(info_layout)
+
+        # --- Create Fonts ---
+        data_font = QFont()
+        data_font.setPointSize(20)
+        target_font = QFont()
+        target_font.setPointSize(24)
+        target_font.setBold(True)
 
         # Create labels for values
         self.lbl_hr = QLabel("--")
@@ -93,6 +98,12 @@ class MainWindow(QMainWindow):
         self.lbl_target_power = QLabel("--")
         self.lbl_status = QLabel("Idle")
         self.progress = QProgressBar()
+
+        # Apply fonts
+        self.lbl_hr.setFont(data_font)
+        self.lbl_cadence.setFont(data_font)
+        self.lbl_power.setFont(data_font)
+        self.lbl_target_power.setFont(target_font)
 
         # Add labels and widgets to grid
         info_layout.addWidget(QLabel("Target Power:"), 0, 0)
@@ -108,10 +119,8 @@ class MainWindow(QMainWindow):
         info_layout.addWidget(QLabel("Progress:"), 1, 4)
         info_layout.addWidget(self.progress, 1, 5)
 
-        # --- Graph ---
         self.graph = TrainingGraph()
 
-        # --- Main Layout ---
         main_layout.addWidget(controls_group)
         main_layout.addWidget(devices_group)
         main_layout.addWidget(info_group)
